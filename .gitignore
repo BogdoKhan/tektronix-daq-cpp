@@ -1,0 +1,6 @@
+/sens*
+*.zip
+*.7z
+*.tar.gz
+/build
+/.vscode
