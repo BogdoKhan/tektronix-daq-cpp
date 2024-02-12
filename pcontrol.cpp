@@ -19,6 +19,10 @@
 #include <cstdint>
 #include <vector>
 #include <fstream>
+#include <iomanip>
+#include <filesystem>
+
+#include "include/progressbar.hpp"
 #include "include/visa.h"
 #include "include/visatype.h"
 #include "include/casts.h"
@@ -109,6 +113,7 @@ int main() {
 	int recordLength, pt_off;
 	double xinc, xzero, ymult, yzero, yoff;
 	int triggered;
+	size_t nEvents;
 
 	// Modify the following line to configure this script for your instrument
 	std::string resourceString = "TCPIP0::192.168.0.200::inst0::INSTR";
@@ -139,8 +144,8 @@ int main() {
 	instrWrite(instr, "data:stop 1e10", retCount);
 	viSetAttribute(instr, VI_ATTR_TERMCHAR, '\r');
 
-	instrQuery(instr, "WFMOutpre?", retCount, buffer);
-	std::cout << buffer << '\n';
+	//instrQuery(instr, "WFMOutpre?", retCount, buffer);
+	//std::cout << buffer << '\n';
 
 
 	recordLength = atoi(instrQuery(instr, "WFMOutpre:NR_Pt?", retCount, buffer));
@@ -155,24 +160,47 @@ int main() {
 	yzero = std::atof(instrQuery(instr, "WFMOutpre:YZERO?", retCount, buffer));
 	yoff = std::atof(instrQuery(instr, "WFMOutpre:YOFF?", retCount, buffer));
 
-	std::cout << ymult << " " << yzero << " " << yoff << '\n';
 
 	instrWrite(instr, "trigger:a:edge:source ch2", retCount);
-	instrWrite(instr, "trigger:a:level:ch2 0.05", retCount);
+	instrWrite(instr, "trigger:a:level:ch2 0.04", retCount);
 	instrWrite(instr, "trigger:a:edge:slope rise", retCount);
 
-	triggered = 0;
+	triggered = 0;			//number of registered events
 	std::string dump;
-	ViInt8 rdbuf[26000];
-	std::vector<double> r1;
-	while (triggered < 1) {
+	ViInt8 rdbuf[recordLength + 8];
+	
+	//fill vector of time values
+	std::vector<double> xvalues;
+	double t0 = (-pt_off * xinc) + xzero;
+	for (size_t i_t0 = 0; i_t0 < recordLength; i_t0++){
+		xvalues.push_back(t0 + xinc * i_t0);
+	}
+	std::string filename;
+
+
+	std::string nSens;
+	std::cout << "Enter the number of sensor or its string indentifier: \n";
+	std::cin >> nSens;
+
+	std::string dirname = "sens " + nSens;
+	std::filesystem::create_directory(dirname);
+	 std::cout << "Current path is " << std::filesystem::current_path() << '\n';
+	std::filesystem::current_path("./" + dirname);
+	 std::cout << "Current path is " << std::filesystem::current_path() << '\n';
+
+	nEvents = 10;
+	std::cout << "Enter the number of events to be registered:\n";
+	std::cin >> nEvents;
+	//progressbar prog_bar(nEvents);
+
+	while (triggered < nEvents) {
 		instrQuery(instr, "trigger:state?", retCount, buffer);
 		dump.assign(buffer, retCount);
 		//std::cout << dump << " " << retCount << '\n';
 
 		instrWrite(instr, "trigger:a:mode normal", retCount);
 		instrWrite(instr, "trigger:a:holdoff:by time", retCount);
-		instrWrite(instr, "trigger:a:holdoff:time 0.05", retCount);
+		instrWrite(instr, "trigger:a:holdoff:time 0.01", retCount);
 
 		instrQuery(instr, "trigger:state?", retCount, buffer);
 		dump.assign(buffer, retCount);
@@ -181,32 +209,69 @@ int main() {
 			instrWrite(instr, "data:encdg ribinary", retCount);
 			//instrQuery(instr, "curve?", retCount, rdbuf);
 			instrWrite(instr, "curve?", retCount);
-			viRead(instr, reinterpret_cast<ViUInt8*>(&rdbuf[0]), 25000, &retCount);
-			//std::cout << retCount << '\n';
+			//read from buffer data, number of data pieces are number of points (record length) +
+			//8 bytes of ieee header
+			viRead(instr, reinterpret_cast<ViUInt8*>(&rdbuf[0]), recordLength + 8, &retCount);
 			instrWrite(instr, "*WAI", retCount);
-			//fprintf(stderr, "scanf: %f\n", buffer);
-			//std::cout << static_cast<std::uint8_t>(rdbuf) << '\n';
-			//std::stringstream ss;
-			//dump.assign(rdbuf, 25008);
-			//std::string dd (rdbuf);
 
+			//create file with spectrum
 			std::ofstream of;
-			of.open("test.dat", std::ofstream::out | std::ofstream::trunc);
-			for (size_t i = 0; i < sizeof(rdbuf); i++) {
-					r1.push_back((rdbuf[i] - yoff)*ymult - yzero);
-			}
-			for (auto i : r1) {
+			filename = "data_" + std::to_string(triggered + 1) + ".csv";
+			of.open(filename, std::ofstream::out | std::ofstream::trunc);
 
-				of << i << "\n" ;
+			//skip first 8 bytes of data
+			//ieee format: #<number of digits representing number of points><number of pts><data>
+			//i.e.: #<5><62500><-27 -28 0 3 4 ...>
+			//values in rdbuf are signed int8_t from -127 to 127
+			//std::cout << "x_size " << xvalues.size() << " y size " << (sizeof(rdbuf) - 8) << '\n';
+			
+			size_t divider = 1; //write each divider-th count from waveform to reduce size of data
+			while (recordLength/divider > 20000) {
+				divider++;
 			}
-			std::cout << '\n';
 
-			triggered++;
+			for (size_t i = 7; i < (sizeof(rdbuf) - 1); i++) {
+					if (i % divider == 0) {
+						of << std::setprecision(5) << xvalues[i-7] << ","
+							<< static_cast<double>((rdbuf[i] - yoff )*ymult + yzero) << '\n';
+					}
+			}
+
+			triggered++;	//increment number of registered events
 			of.close();
 		}
-
-
+		if ( triggered == 1 || triggered % 20 == 0 || triggered == nEvents) {
+			std::cout << "Processed " << triggered << "/" << nEvents << " events" << '\r';
+		}
 	}
+	std::cout << '\n';
+	instrWrite(instr, "trigger:a:mode auto", retCount);
+	instrWrite(instr, "trigger:a:holdoff:by random", retCount);
+
+/*	instrWrite(instr, "trigger:a:level:ch2 0.01", retCount);
+	instrWrite(instr, "acquire:fastacq:state on", retCount);
+	instrWrite(instr, "pause 0.5", retCount);
+	
+	instrWrite(instr, "save:image \"C:/st.png\"", retCount);
+	instrWrite(instr, "*wai", retCount);
+
+	viSetAttribute(instr, VI_ATTR_TMO_VALUE, 25000);
+	instrWrite(instr, "filesyste::readfile \"C:/st.png\"", retCount);
+	std::string fname = "!st.png";
+	std::ofstream of_pic;
+	ViUInt16 picbuf[160000];
+	of_pic.open(fname, std::ofstream::out | std::ofstream::trunc);
+	viRead(instr, reinterpret_cast<ViPBuf>(&picbuf[0]), sizeof(picbuf),&retCount);
+		instrWrite(instr, "*wai", retCount);
+
+	for (size_t i = 0; i < sizeof(picbuf); i++) {
+		of_pic << std::hex << picbuf[i];
+	}
+	of_pic.close();
+
+	instrWrite(instr, "acquire:fastacq:state off", retCount);*/
+
+	std::filesystem::current_path("../");
 
 
 /*
