@@ -24,10 +24,13 @@ find_package(GSL REQUIRED)
 set(GSL_FIT_DIR ./include/gsl-curve-fit/)
 #include_directories(${GSL_FIT_DIR})
 
+set(GNUPL_DIR ./include/gnuplot-cpp/)
+#include_directories(${GNUPL_DIR})
+
 set(SOURCES "pcontrol.cpp" ${HPPS})
 set(LIBRARIES "GSL::gsl;GSL::gslcblas")
 
-add_executable (hw1 ${SOURCES} ${GSL_FIT_DIR}/curve_fit.cpp)
-target_include_directories(hw1 PUBLIC ${INCLUDE_PATH} ${GSL_FIT_DIR})
+add_executable (daq-sipm ${SOURCES} ${GSL_FIT_DIR}/curve_fit.cpp)
+target_include_directories(daq-sipm PUBLIC ${INCLUDE_PATH} ${GSL_FIT_DIR} ${GNUPL_DIR})
 
-target_link_libraries(hw1 PUBLIC nivisa ${LIBRARIES})
+target_link_libraries(daq-sipm PUBLIC nivisa ${LIBRARIES})

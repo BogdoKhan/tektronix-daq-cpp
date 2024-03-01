@@ -15,6 +15,47 @@
 #include "casts.h"
 #include "vi_c2cpp.h"
 
+#include "curve_fit.hpp"
+#include "gnuplot.h"
+
+#include <gsl/gsl_randist.h>
+
+double gaussian(double x, double a, double b, double c)
+{
+    const double z = (x - b) / c;
+    return a * std::exp(-0.5 * z * z);
+}
+
+double Landau(double x, double c, double mu, double sigma)
+{
+   if (sigma <= 0) return 0;
+   double den = c * gsl_ran_landau_pdf( (x-mu)/sigma );
+   return den;
+}
+
+struct histogr{
+	std::vector<double> xvals;
+	std::vector<int> yvals;
+};
+
+histogr FillHistogram(const std::vector<double>& data, double nbins){
+	std::vector<double> xvals(nbins);
+	std::vector<int> histo(nbins);
+	double min_elem = *(std::min_element(data.begin(), data.end()));
+	double max_elem = *(std::max_element(data.begin(), data.end()));
+	double xmin = min_elem - 0.1 * min_elem;
+	double xmax = max_elem + 0.1 * max_elem;
+	double binwidth = (xmax - xmin) / nbins;
+	for (size_t i = 0; i < nbins; i++) {
+		xvals.at(i) = xmin + i * binwidth;
+	};
+	for (const double & item : data) {
+		histo.at((size_t) ((item - xmin)/binwidth)) += 1;
+	}
+	histogr res {xvals, histo};
+	return res;
+}
+
 int main() {
 
 	ViStatus  status;
@@ -27,7 +68,8 @@ int main() {
 	size_t nEvents;
 
 	// Address of the oscilloscope, TCPIP or USB
-	std::string resourceString = "TCPIP0::192.168.0.200::inst0::INSTR";
+	//std::string resourceString = "TCPIP0::192.168.0.200::inst0::INSTR";
+	std::string resourceString = "USB0::0x0699::0x0527::C032360::INSTR";
 	std::string scpi;
 
 	// Initialize VISA session, if any errors, quit the program
@@ -93,8 +135,15 @@ int main() {
 	std::cout << "Enter the number of events to be registered:\n";
 	std::cin >> nEvents;
 
+
+	std::vector<double> xv,yv, fv,av, iv;
+	histogr fit_values, av_values, iv_values;
 	//main data acquisition loop
 	while (triggered < nEvents) {
+
+		xv.clear();
+		yv.clear();
+
 		instrQuery(instr, "trigger:state?", retCount, buffer);	//check trigger state
 		dump.assign(buffer, retCount);
 		//set trigger mode
@@ -132,18 +181,36 @@ int main() {
 					if (i % divider == 0) {
 						of << std::setprecision(5) << xvalues[i-7] << ","
 							<< static_cast<double>((rdbuf[i] - yoff )*ymult + yzero) << '\n';
+							xv.push_back(xvalues[i-7]);
+							yv.push_back(static_cast<double>((rdbuf[i] - yoff )*ymult + yzero));
 					}
 			}
 
 			triggered++;	//increment number of registered events
 			of.close();
+
+			auto fit_res = curve_fit(Landau, {0.4, -1e-9, 9e-8}, xv, yv);
+			double integral = 0;
+			for (auto& item : xv) {
+				integral += Landau(item, fit_res[0], fit_res[1], fit_res[2]);
+			}
+			//std::cout << fit_res[1] << " " << fit_res[2] * 4 << "\n";
+			fv.push_back(fit_res[2] * 4);
+			av.push_back(fit_res[0]);
+			iv.push_back(integral);
+			//fit_values.yvals.push_back(fit_res[2] * 4);
 		}
 		if ( triggered == 1 || triggered % 20 == 0 || triggered == nEvents) {	
 			std::cout << "Processed " << triggered << "/" << nEvents << " events" << '\r';//control progress
 		}
 	}
+
+		std::cout << '\n';
+	fit_values = FillHistogram(fv, 500);
+	av_values = FillHistogram(av,500);
+	iv_values = FillHistogram(iv,500);
 	
-	std::cout << '\n';
+
 	instrWrite(instr, "trigger:a:holdoff:by random", retCount);	//cancel delay between acquisitions
 																//for fast acq screenshot
 	instrWrite(instr, "trigger:a:level:ch2 0.01", retCount);
@@ -171,8 +238,50 @@ int main() {
 
 	std::filesystem::current_path("../");
 
+	instrWrite(instr, "trigger:a:level:ch2 0.04", retCount);
+
 	viClose(instr);
 	viClose(defaultRM);
+
+	//auto r = curve_fit(Landau, {0.4, -1e-9, 9e-8}, xv, yv);
+	//std::cout << "Fit results: " << r[0] << " " << r[1] << " "
+    //    << r[2] << "\n";
+
+
+	std::ofstream out;
+	out.open("data.txt", std::ios::trunc);
+    for(size_t i = 0; i < fit_values.xvals.size(); i++)
+    {
+        out << std::scientific << std::setprecision(5) << fit_values.xvals[i] << "," << fit_values.yvals[i] << "\n";
+    }
+    out.close();
+	out.open("amp.txt", std::ios::trunc);
+    for(size_t i = 0; i < av_values.xvals.size(); i++)
+    {
+        out << std::scientific << std::setprecision(5) << av_values.xvals[i] << "," << av_values.yvals[i] << "\n";
+    }
+    out.close();
+	out.open("intg.txt", std::ios::trunc);
+    for(size_t i = 0; i < av_values.xvals.size(); i++)
+    {
+        out << std::scientific << std::setprecision(5) << iv_values.xvals[i] << "," << iv_values.yvals[i] << "\n";
+    }
+    out.close();
+
+	GnuplotPipe gp;
+	gp.sendLine("set datafile separator \",\"");
+	//std::string gpquery = "plot \"./" + dirname + "/data_" + std::to_string(nEvents) 
+	//	+ ".csv\" using 1:2 with lines, \"data.txt\" using 1:2 with lines";
+	gp.sendLine("set term wxt 1 size 500, 400");
+	std::string gpquery = "plot \"data.txt\" using 1:2 with lines";
+	gp.sendLine(gpquery);
+	gp.sendLine("set term wxt 2 size 500, 400");
+	gpquery = "plot \"amp.txt\" using 1:2 with lines";
+	gp.sendLine(gpquery);
+	gp.sendLine("set term wxt 3 size 500, 400");
+	gpquery = "plot \"intg.txt\" using 1:2 with lines";
+	gp.sendLine(gpquery);
+
 	std::cout << "Done! Press 1 and hit ENTER to finish.\n";
 	int a;
 	std::cin >> a;
