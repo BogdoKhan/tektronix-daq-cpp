@@ -132,7 +132,8 @@ int main() {
 
 	//set trigger source, level, edge
 	instrWrite(instr, "trigger:a:edge:source ch2", retCount);
-	scpi = "trigger:a:level:" + quevalue + " " + trigvalue;
+	scpi = "trigger:a:level:ch" + quevalue + " " + trigvalue;
+	instrWrite(instr, scpi, retCount);
 	//instrWrite(instr, "trigger:a:level:ch2 0.5", retCount);
 	instrWrite(instr, "trigger:a:edge:slope rise", retCount);
 
@@ -269,7 +270,9 @@ int main() {
 	}
 
 	instrWrite(instr, "trigger:a:mode auto", retCount);			//turn back auto trigger mode
-	instrWrite(instr, "trigger:a:level:ch2 0.5", retCount);
+	//instrWrite(instr, "trigger:a:level:ch2 0.5", retCount);
+	scpi = "trigger:a:level:ch" + quevalue + " " + trigvalue;
+	instrWrite(instr, scpi, retCount);
 
 	viClose(instr);
 	viClose(defaultRM);
