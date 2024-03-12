@@ -27,10 +27,12 @@ set(GSL_FIT_DIR ./include/gsl-curve-fit/)
 set(GNUPL_DIR ./include/gnuplot-cpp/)
 #include_directories(${GNUPL_DIR})
 
+set(LSYS_INI_DIR ./include/LeksysINI/)
+
 set(SOURCES "pcontrol.cpp" ${HPPS})
 set(LIBRARIES "GSL::gsl;GSL::gslcblas")
 
 add_executable (daq-sipm ${SOURCES} ${GSL_FIT_DIR}/curve_fit.cpp)
-target_include_directories(daq-sipm PUBLIC ${INCLUDE_PATH} ${GSL_FIT_DIR} ${GNUPL_DIR})
+target_include_directories(daq-sipm PUBLIC ${INCLUDE_PATH} ${GSL_FIT_DIR} ${GNUPL_DIR} ${LSYS_INI_DIR})
 
 target_link_libraries(daq-sipm PUBLIC nivisa ${LIBRARIES})
